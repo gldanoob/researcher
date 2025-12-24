@@ -1,4 +1,4 @@
 # Attempt to replace academic researchers with AI agents
 
 # Architecture
-![Architecture](research_)
+![Architecture](docs/researcher_graph.png)
