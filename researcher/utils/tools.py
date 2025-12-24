@@ -20,3 +20,4 @@ def structured_output_tool(model: type[BaseModel]) -> BaseTool:
     # print(wrapper.__doc__)
 
     return tool(wrapper)
+

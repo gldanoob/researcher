@@ -5,12 +5,15 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "aiosqlite>=0.22.1",
     "arxiv-mcp-server>=0.3.1",
     "dotenv>=0.9.9",
     "langchain>=1.2.0",
     "langchain-deepseek",
     "langchain-mcp-adapters>=0.2.1",
     "langgraph>=1.0.5",
+    "langgraph-checkpoint-sqlite>=3.0.1",
+    "langgraph-supervisor>=0.0.31",
 ]
 
 [tool.uv.sources]
