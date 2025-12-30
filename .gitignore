@@ -14,3 +14,7 @@ arxiv_data
 data
 *.db
 *.bin
+*.log
+*.db-shm
+*.db-wal
+output/
