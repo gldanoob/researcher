@@ -6,15 +6,19 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "aiosqlite>=0.22.1",
-    "arxiv-mcp-server>=0.3.1",
+    "arxiv-mcp-server",
     "dotenv>=0.9.9",
     "langchain>=1.2.0",
+    "langchain-chroma>=1.1.0",
+    "langchain-community>=0.4.1",
     "langchain-deepseek",
     "langchain-mcp-adapters>=0.2.1",
     "langgraph>=1.0.5",
     "langgraph-checkpoint-sqlite>=3.0.1",
     "langgraph-supervisor>=0.0.31",
+    "pymupdf-layout>=1.26.6",
 ]
 
 [tool.uv.sources]
-langchain-deepseek = { git = "https://github.com/hak2979/langchain.git", subdirectory = "libs/partners/deepseek", rev = "fix/chat/deepseek" }
+langchain-deepseek = { git = "https://github.com/yurekami/langchain.git", subdirectory = "libs/partners/deepseek", rev = "fix/deepseek-reasoning-content-multiturn" }
+arxiv-mcp-server = { git = "https://github.com/gldanoob/arxiv-mcp-server.git", rev = "fix/pymupdf4llm-warning-message" }
