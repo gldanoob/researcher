@@ -1,0 +1,1 @@
+uv run arxiv-mcp-server --storage-path ./arxiv_data
