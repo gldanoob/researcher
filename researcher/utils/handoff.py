@@ -39,26 +39,19 @@ def create_handoff_tool(*, agent_name: str, description: str | None = None):
 @tool("handoff_to_multiple_agents", description="Hand off the research task to multiple agents in parallel.")
 def handoff_to_multiple_agents_tool(
     agent_names: Annotated[
-        list[Literal["literature_review_agent_1", "literature_review_agent_2"]],
+        list[Literal["literature_review_agent_1", "literature_review_agent_2", "proposal_writer_agent"]],
         "List of names of agents to hand off the research task to.",
     ],
     task_descriptions: Annotated[
         list[str],
-        "Description of what the next agents should do, including all of the relevant context. Should be in the same order as agent_names.",
+        "Description of what the next agents should do, including all of the relevant context and key information. Should be in the same order as agent_names.",
     ],
     state: Annotated[MessagesState, InjectedState],
-    tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> Command:
     commands = []
     for agent_name, task_description in zip(agent_names, task_descriptions):
         task_description_message = HumanMessage(content=task_description)
-        tool_message = {
-            "role": "tool",
-            "content": f"Successfully transferred to {agent_name}",
-            "name": "handoff_to_multiple_agents",
-            "tool_call_id": tool_call_id,
-        }
-        agent_input = {**state, "messages": state["messages"] + [tool_message, task_description_message]}
+        agent_input = {**state, "messages": [task_description_message]}
         commands.append(Send(agent_name, agent_input))
 
     return Command(

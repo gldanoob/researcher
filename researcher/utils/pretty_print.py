@@ -33,6 +33,10 @@ def pretty_print_messages(update, last_message=False):
         print(update_label)
         print("\n")
 
+        if node_update is None:
+            print("(no update)")
+            print("\n")
+            continue
         messages = convert_to_messages(node_update["messages"])
         if last_message:
             messages = messages[-1:]

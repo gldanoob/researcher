@@ -4,11 +4,17 @@ import os
 import aiosqlite
 from dotenv import load_dotenv
 from langchain.agents import create_agent
+from langchain.agents.middleware import SummarizationMiddleware, ModelCallLimitMiddleware
+from langchain_community.agent_toolkits import FileManagementToolkit
 from langchain_core.messages import HumanMessage
+from langchain_core.messages.utils import (count_tokens_approximately,
+                                           trim_messages)
 from langchain_deepseek import ChatDeepSeek
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.interceptors import MCPToolCallRequest
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
+from mcp.types import CallToolResult, ContentBlock, TextContent
 
 from researcher.state import ResearchState
 from researcher.utils.handoff import handoff_to_multiple_agents_tool
@@ -33,6 +39,17 @@ def read_prompt(agent_name: str) -> str:
         return f.read()
 
 
+async def mcp_exception_handler(request: MCPToolCallRequest, handler):
+    try:
+        response = await handler(request)
+        return response
+    except Exception as e:
+        return CallToolResult(content=[
+            TextContent(type="text", text=f"An error occurred while calling the tool: {str(e)}")
+        ], isError=True)
+
+
+
 async def main():
     async with aiosqlite.connect("researcher_state.db") as conn:
         model = ChatDeepSeek(model="deepseek-reasoner")
@@ -40,20 +57,28 @@ async def main():
             {
                 "arxiv": {
                     "transport": "stdio",
-                    "command": "uv",
+                    "command": "sh",
                     "args": [
-                        "run", "arxiv-mcp-server", "--storage-path", "./arxiv_data"
+                        "run.sh"
                     ],
-                }
-            }
+                },
+            },
+            tool_interceptors=[mcp_exception_handler]
+
         )
         mcp_tools = await client.get_tools()
+
+        file_toolkit = FileManagementToolkit(
+            root_dir=os.path.join(os.getcwd(), "output")
+        )
+        file_tools = file_toolkit.get_tools()
+
         checkpointer = AsyncSqliteSaver(conn)
 
         sub_agents_tools = {
-            "literature_review_agent_1": mcp_tools,
-            "literature_review_agent_2": mcp_tools,
-            "proposal_writer_agent": [],
+            "literature_review_agent_1": mcp_tools + file_tools,
+            "literature_review_agent_2": mcp_tools + file_tools,
+            "proposal_writer_agent": file_tools
         }
 
         sub_agents = {
@@ -62,7 +87,18 @@ async def main():
                 model=model,
                 system_prompt=read_prompt(name),
                 tools=sub_agents_tools[name],
-                checkpointer=checkpointer,
+                middleware=[
+                    SummarizationMiddleware(
+                        model=model,
+                        trigger=("tokens", 100000),
+                        keep=("messages", 15)
+                    ),
+                    ModelCallLimitMiddleware(
+                        thread_limit=10,
+                        run_limit=10,
+                        exit_behavior="end"
+                    )
+                ],
             )
             for name in sub_agents_tools
         }
@@ -71,15 +107,23 @@ async def main():
             name="research_supervisor",
             model=model,
             system_prompt=read_prompt("research_supervisor"),
-            tools=[handoff_to_multiple_agents_tool],
-            checkpointer=checkpointer,
+            tools=[handoff_to_multiple_agents_tool] + file_tools,
+            checkpointer=checkpointer,  # Will propagate to sub-agents
+            middleware=[SummarizationMiddleware(
+                model=model,
+                trigger=("tokens", 100000),
+                keep=("messages", 15)
+            )],
         )
 
         graph = StateGraph(ResearchState)
-        graph.add_node(supervisor, destinations=(*sub_agents.keys(), END))
+        graph.add_node(supervisor, destinations=(*sub_agents.keys(), END), defer=True)
         for name, agent in sub_agents.items():
             graph.add_node(agent)
             graph.add_edge(name, "research_supervisor")
+
+            with open(os.path.join("docs", f"{name}_graph.png"), "wb") as f:
+                f.write((await agent.aget_graph()).draw_mermaid_png())
 
         graph.add_edge(START, "research_supervisor")
         chain = graph.compile(checkpointer=checkpointer)
@@ -89,11 +133,6 @@ async def main():
 
         async for chunk in chain.astream(
             ResearchState(
-                ideas=[],
-                proposal="",
-                bibliography="",
-                final_paper="",
-                literature_review="",
                 messages=[
                     HumanMessage(content="LLM steering")
                 ],
@@ -105,7 +144,7 @@ async def main():
             pretty_print_messages(chunk)
 
         # Save final graph state into text file
-        final_state = chain.get_state({"configurable": {"thread_id": "1"}})
+        final_state = await chain.aget_state({"configurable": {"thread_id": "1"}})
         with open("final_research_state.txt", "w") as f:
             f.write(str(final_state))
 
