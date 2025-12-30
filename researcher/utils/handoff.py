@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.graph import MessagesState
 from langgraph.prebuilt import InjectedState
@@ -36,7 +36,7 @@ def create_handoff_tool(*, agent_name: str, description: str | None = None):
     return handoff_tool
 
 
-@tool("handoff_to_multiple_agents", description="Hand off the research task to multiple agents in parallel.")
+@tool("hand_off_to_agents", description="Hand off the research task to multiple agents in parallel.")
 def handoff_to_multiple_agents_tool(
     agent_names: Annotated[
         list[Literal["literature_review_agent_1", "literature_review_agent_2", "proposal_writer_agent"]],

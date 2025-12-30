@@ -1,22 +1,24 @@
 import asyncio
 import os
+import shutil
 
 import aiosqlite
 from dotenv import load_dotenv
 from langchain.agents import create_agent
-from langchain.agents.middleware import SummarizationMiddleware, ModelCallLimitMiddleware
+from langchain.agents.middleware import (ModelCallLimitMiddleware,
+                                         SummarizationMiddleware)
 from langchain_community.agent_toolkits import FileManagementToolkit
-from langchain_core.messages import HumanMessage
-from langchain_core.messages.utils import (count_tokens_approximately,
-                                           trim_messages)
+from langchain_community.agent_toolkits.openapi.toolkit import RequestsToolkit
+from langchain_community.tools import BraveSearch
+from langchain_community.utilities.requests import TextRequestsWrapper
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_deepseek import ChatDeepSeek
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_mcp_adapters.interceptors import MCPToolCallRequest
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
-from mcp.types import CallToolResult, ContentBlock, TextContent
 
 from researcher.state import ResearchState
+from researcher.utils import tools
 from researcher.utils.handoff import handoff_to_multiple_agents_tool
 from researcher.utils.pretty_print import pretty_print_messages
 
@@ -39,46 +41,32 @@ def read_prompt(agent_name: str) -> str:
         return f.read()
 
 
-async def mcp_exception_handler(request: MCPToolCallRequest, handler):
-    try:
-        response = await handler(request)
-        return response
-    except Exception as e:
-        return CallToolResult(content=[
-            TextContent(type="text", text=f"An error occurred while calling the tool: {str(e)}")
-        ], isError=True)
+# Turn all human messages into system messages before returning to supervisor
 
+def change_human_messages(state: ResearchState) -> ResearchState:
+    print("Changing human messages to AI messages (Except first message) before returning to supervisor...")
+    print("Human message count:", sum(1 for msg in state["messages"] if msg.type == "human"))
+    changed_messages = [state["messages"][0]] + [
+        AIMessage(content=msg.content)
+        if msg.type == "human"
+        else msg
+        for msg in state["messages"][1:]
+    ]
+    state["messages"] = changed_messages
+    return state
 
 
 async def main():
     async with aiosqlite.connect("researcher_state.db") as conn:
         model = ChatDeepSeek(model="deepseek-reasoner")
-        client = MultiServerMCPClient(
-            {
-                "arxiv": {
-                    "transport": "stdio",
-                    "command": "sh",
-                    "args": [
-                        "run.sh"
-                    ],
-                },
-            },
-            tool_interceptors=[mcp_exception_handler]
-
-        )
-        mcp_tools = await client.get_tools()
-
-        file_toolkit = FileManagementToolkit(
-            root_dir=os.path.join(os.getcwd(), "output")
-        )
-        file_tools = file_toolkit.get_tools()
+        mcp_tools = await tools.get_arxiv_tools()
 
         checkpointer = AsyncSqliteSaver(conn)
 
         sub_agents_tools = {
-            "literature_review_agent_1": mcp_tools + file_tools,
-            "literature_review_agent_2": mcp_tools + file_tools,
-            "proposal_writer_agent": file_tools
+            "literature_review_agent_1": mcp_tools + tools.file_tools + [tools.brave_search_tool] + tools.request_tools,
+            "literature_review_agent_2": mcp_tools + tools.file_tools + [tools.brave_search_tool] + tools.request_tools,
+            "proposal_writer_agent": tools.file_tools + tools.request_tools + [tools.brave_search_tool]
         }
 
         sub_agents = {
@@ -107,7 +95,7 @@ async def main():
             name="research_supervisor",
             model=model,
             system_prompt=read_prompt("research_supervisor"),
-            tools=[handoff_to_multiple_agents_tool] + file_tools,
+            tools=[handoff_to_multiple_agents_tool] + tools.file_tools,
             checkpointer=checkpointer,  # Will propagate to sub-agents
             middleware=[SummarizationMiddleware(
                 model=model,
@@ -118,9 +106,11 @@ async def main():
 
         graph = StateGraph(ResearchState)
         graph.add_node(supervisor, destinations=(*sub_agents.keys(), END), defer=True)
+        graph.add_node(change_human_messages, defer=False)
+        graph.add_edge("change_human_messages", "research_supervisor")
         for name, agent in sub_agents.items():
             graph.add_node(agent)
-            graph.add_edge(name, "research_supervisor")
+            graph.add_edge(name, "change_human_messages")
 
             with open(os.path.join("docs", f"{name}_graph.png"), "wb") as f:
                 f.write((await agent.aget_graph()).draw_mermaid_png())
@@ -134,7 +124,7 @@ async def main():
         async for chunk in chain.astream(
             ResearchState(
                 messages=[
-                    HumanMessage(content="LLM steering")
+                    HumanMessage(content="Most efficient optimization algorithm for Residual Neural Networks")
                 ],
             ),
             subgraphs=True,
@@ -152,4 +142,7 @@ async def main():
 if __name__ == "__main__":
     if os.path.exists("researcher_state.db"):
         os.remove("researcher_state.db")
+    if os.path.exists("output"):
+        shutil.rmtree("output")
+    os.makedirs("output")
     asyncio.run(main())
