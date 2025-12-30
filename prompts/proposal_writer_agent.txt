@@ -5,3 +5,6 @@ When writing a proposal, ensure that you include the following sections:
 - Research Questions/Objectives
 - Research Implications
 - Research Methodology/Plan
+
+You have access to a temporary folder for storing and managing information during your writing process. Use this resource to organize your drafts, references, and any other relevant materials. 
+Also output the final proposal document to this folder.
