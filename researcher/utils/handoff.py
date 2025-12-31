@@ -39,7 +39,7 @@ def create_handoff_tool(*, agent_name: str, description: str | None = None):
 @tool("hand_off_to_agents", description="Hand off the research task to multiple agents in parallel.")
 def handoff_to_multiple_agents_tool(
     agent_names: Annotated[
-        list[Literal["literature_review_agent_1", "literature_review_agent_2", "proposal_writer_agent"]],
+        list[Literal["literature_reviewer_1", "literature_reviewer_2", "technical_writer", "peer_reviewer"]],
         "List of names of agents to hand off the research task to.",
     ],
     task_descriptions: Annotated[

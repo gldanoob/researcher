@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from langchain.agents import create_agent
 from langchain.agents.middleware import (ModelCallLimitMiddleware,
                                          SummarizationMiddleware)
+from langchain.messages import RemoveMessage
 from langchain_community.agent_toolkits import FileManagementToolkit
 from langchain_community.agent_toolkits.openapi.toolkit import RequestsToolkit
 from langchain_community.tools import BraveSearch
@@ -43,30 +44,32 @@ def read_prompt(agent_name: str) -> str:
 
 # Turn all human messages into system messages before returning to supervisor
 
-def change_human_messages(state: ResearchState) -> ResearchState:
+def convert_human_to_ai_messages(state: ResearchState) -> ResearchState:
     print("Changing human messages to AI messages (Except first message) before returning to supervisor...")
-    print("Human message count:", sum(1 for msg in state["messages"] if msg.type == "human"))
-    changed_messages = [state["messages"][0]] + [
-        AIMessage(content=msg.content)
-        if msg.type == "human"
-        else msg
-        for msg in state["messages"][1:]
-    ]
-    state["messages"] = changed_messages
-    return state
+
+    converted_messages = []
+
+    for msg in state["messages"][1:]:
+        if msg.type == "human":
+            converted_messages.append(AIMessage(content=msg.content, id=msg.id))
+
+    return {
+        "messages": converted_messages,
+    }
 
 
 async def main():
     async with aiosqlite.connect("researcher_state.db") as conn:
         model = ChatDeepSeek(model="deepseek-reasoner")
-        mcp_tools = await tools.get_arxiv_tools()
-
         checkpointer = AsyncSqliteSaver(conn)
 
+        mcp_tools = await tools.get_arxiv_tools()
+
         sub_agents_tools = {
-            "literature_review_agent_1": mcp_tools + tools.file_tools + [tools.brave_search_tool] + tools.request_tools,
-            "literature_review_agent_2": mcp_tools + tools.file_tools + [tools.brave_search_tool] + tools.request_tools,
-            "proposal_writer_agent": tools.file_tools + tools.request_tools + [tools.brave_search_tool]
+            "literature_reviewer_1": mcp_tools + tools.file_tools + [tools.brave_search_tool] + tools.request_tools,
+            "literature_reviewer_2": mcp_tools + tools.file_tools + [tools.brave_search_tool] + tools.request_tools,
+            "technical_writer": tools.file_tools + tools.request_tools + [tools.brave_search_tool],
+            "peer_reviewer": tools.file_tools + tools.request_tools + [tools.brave_search_tool],
         }
 
         sub_agents = {
@@ -106,11 +109,11 @@ async def main():
 
         graph = StateGraph(ResearchState)
         graph.add_node(supervisor, destinations=(*sub_agents.keys(), END), defer=True)
-        graph.add_node(change_human_messages, defer=False)
-        graph.add_edge("change_human_messages", "research_supervisor")
+        graph.add_node(convert_human_to_ai_messages, defer=False)
+        graph.add_edge("convert_human_to_ai_messages", "research_supervisor")
         for name, agent in sub_agents.items():
             graph.add_node(agent)
-            graph.add_edge(name, "change_human_messages")
+            graph.add_edge(name, "convert_human_to_ai_messages")
 
             with open(os.path.join("docs", f"{name}_graph.png"), "wb") as f:
                 f.write((await agent.aget_graph()).draw_mermaid_png())
@@ -124,19 +127,15 @@ async def main():
         async for chunk in chain.astream(
             ResearchState(
                 messages=[
-                    HumanMessage(content="Most efficient optimization algorithm for Residual Neural Networks")
+                    HumanMessage(content="Making modern web cryptography quantum resistant."),
                 ],
             ),
             subgraphs=True,
             # stream_mode="debug",
             config={"configurable": {"thread_id": "1"}},
         ):
-            pretty_print_messages(chunk)
-
-        # Save final graph state into text file
-        final_state = await chain.aget_state({"configurable": {"thread_id": "1"}})
-        with open("final_research_state.txt", "w") as f:
-            f.write(str(final_state))
+            # pretty_print_messages(chunk)
+            pass
 
 
 if __name__ == "__main__":
@@ -145,4 +144,6 @@ if __name__ == "__main__":
     if os.path.exists("output"):
         shutil.rmtree("output")
     os.makedirs("output")
+    # For now just copy data files to output
+    os.system("cp -r data/* output/")
     asyncio.run(main())
