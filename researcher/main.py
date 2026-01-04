@@ -1,27 +1,21 @@
 import asyncio
 import os
 import shutil
+from collections.abc import Iterable
 
 import aiosqlite
 from dotenv import load_dotenv
 from langchain.agents import create_agent
 from langchain.agents.middleware import (ModelCallLimitMiddleware,
                                          SummarizationMiddleware)
-from langchain.messages import RemoveMessage
-from langchain_community.agent_toolkits import FileManagementToolkit
-from langchain_community.agent_toolkits.openapi.toolkit import RequestsToolkit
-from langchain_community.tools import BraveSearch
-from langchain_community.utilities.requests import TextRequestsWrapper
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_deepseek import ChatDeepSeek
-from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
 
 from researcher.state import ResearchState
 from researcher.utils import tools
 from researcher.utils.handoff import handoff_to_multiple_agents_tool
-from researcher.utils.pretty_print import pretty_print_messages
 
 load_dotenv()
 
@@ -42,11 +36,23 @@ def read_prompt(agent_name: str) -> str:
         return f.read()
 
 
-# Turn all human messages into system messages before returning to supervisor
+def token_counter(messages: Iterable[BaseMessage]) -> int:
+    # Get usage matadata from last message
+    messages = list(messages)
+    if not messages:
+        return 0
+    try:
+        last_ai_message = next(msg for msg in reversed(messages) if isinstance(msg, AIMessage))
+    except StopIteration:
+        return 0
+    usage = last_ai_message.usage_metadata
+    token_count = usage and usage.get("total_tokens", 0) or 0
+    print(f"Total tokens used: {token_count}")
+    return token_count
+
 
 def convert_human_to_ai_messages(state: ResearchState) -> ResearchState:
-    print("Changing human messages to AI messages (Except first message) before returning to supervisor...")
-
+    # Turn all human messages into system messages before returning to supervisor
     converted_messages = []
 
     for msg in state["messages"][1:]:
@@ -66,10 +72,10 @@ async def main():
         mcp_tools = await tools.get_arxiv_tools()
 
         sub_agents_tools = {
-            "literature_reviewer_1": mcp_tools + tools.file_tools + [tools.brave_search_tool] + tools.request_tools,
-            "literature_reviewer_2": mcp_tools + tools.file_tools + [tools.brave_search_tool] + tools.request_tools,
-            "technical_writer": tools.file_tools + tools.request_tools + [tools.brave_search_tool],
-            "peer_reviewer": tools.file_tools + tools.request_tools + [tools.brave_search_tool],
+            "literature_reviewer_1": mcp_tools + tools.file_tools + [tools.brave_search_tool, tools.retrieve_relevant_documents] + tools.request_tools,
+            "literature_reviewer_2": mcp_tools + tools.file_tools + [tools.brave_search_tool, tools.retrieve_relevant_documents] + tools.request_tools,
+            "technical_writer": tools.file_tools + tools.request_tools + [tools.brave_search_tool, tools.retrieve_relevant_documents],
+            "peer_reviewer": tools.file_tools + tools.request_tools + [tools.brave_search_tool, tools.retrieve_relevant_documents],
         }
 
         sub_agents = {
@@ -82,11 +88,12 @@ async def main():
                     SummarizationMiddleware(
                         model=model,
                         trigger=("tokens", 100000),
-                        keep=("messages", 15)
+                        keep=("messages", 15),
+                        token_counter=token_counter
                     ),
                     ModelCallLimitMiddleware(
-                        thread_limit=10,
-                        run_limit=10,
+                        thread_limit=20,
+                        run_limit=20,
                         exit_behavior="end"
                     )
                 ],
@@ -127,7 +134,7 @@ async def main():
         async for chunk in chain.astream(
             ResearchState(
                 messages=[
-                    HumanMessage(content="Making modern web cryptography quantum resistant."),
+                    HumanMessage(content="LLM performance on Captcha tasks"),
                 ],
             ),
             subgraphs=True,
@@ -144,6 +151,4 @@ if __name__ == "__main__":
     if os.path.exists("output"):
         shutil.rmtree("output")
     os.makedirs("output")
-    # For now just copy data files to output
-    os.system("cp -r data/* output/")
     asyncio.run(main())
