@@ -17,6 +17,7 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=3.0.1",
     "langgraph-supervisor>=0.0.31",
     "pymupdf-layout>=1.26.6",
+    "pypdf>=6.5.0",
 ]
 
 [tool.uv.sources]

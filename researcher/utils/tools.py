@@ -1,20 +1,29 @@
+import base64
 import json
 import os
+from typing import Annotated
 
+from dotenv import load_dotenv
+from langchain.messages import ToolMessage
 from langchain.tools import BaseTool, tool
+from langchain_chroma import Chroma
 from langchain_community.agent_toolkits import FileManagementToolkit
 from langchain_community.agent_toolkits.openapi.toolkit import RequestsToolkit
 from langchain_community.tools import BraveSearch
+from langchain_community.utilities.requests import TextRequestsWrapper
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.interceptors import MCPToolCallRequest
-from mcp.types import CallToolResult, ContentBlock, TextContent
+from langchain_openai import OpenAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
 
-from langchain_community.utilities.requests import TextRequestsWrapper
-
-from dotenv import load_dotenv
+from researcher.utils import loader
 
 load_dotenv()
+
+OUTPUT_DIR = os.path.join(os.getcwd(), "output")
+
 
 def structured_output_tool(model: type[BaseModel]) -> BaseTool:
     """Decorator to create a structured output tool from a Pydantic model."""
@@ -32,6 +41,28 @@ def structured_output_tool(model: type[BaseModel]) -> BaseTool:
     # print(wrapper.__doc__)
 
     return tool(wrapper)
+
+
+@tool
+def read_binary_file(file_path: str) -> dict:
+    """Reads a binary file and returns its content encoded in base64."""
+    path = os.path.join(OUTPUT_DIR, file_path)
+
+    if not os.path.exists(path):
+        return {
+            "type": "input_text",
+            "content": f"File {path} does not exist."
+        }
+
+    with open(path, "rb") as f:
+        encoded_content = base64.b64encode(f.read())
+
+    # return encoded_content
+    return {
+        "type": "input_file",
+        "filename": os.path.basename(path),
+        "file_data": encoded_content.decode("utf-8"),
+    }
 
 
 async def mcp_exception_handler(request: MCPToolCallRequest, handler):
@@ -64,7 +95,8 @@ async def get_arxiv_tools() -> list[BaseTool]:
 file_toolkit = FileManagementToolkit(
     root_dir=os.path.join(os.getcwd(), "output")
 )
-file_tools = file_toolkit.get_tools()
+
+file_tools = file_toolkit.get_tools() + [read_binary_file]
 
 brave_search_tool = BraveSearch()
 
@@ -72,3 +104,29 @@ request_tools = RequestsToolkit(
     requests_wrapper=TextRequestsWrapper(headers={}),
     allow_dangerous_requests=True
 ).get_tools()
+
+
+embeddings = OpenAIEmbeddings(model="text-embedding-3-large", chunk_size=256)
+chroma_store = Chroma(
+    collection_name="researcher_collection",
+    embedding_function=embeddings,
+    persist_directory="./"
+)
+documents = loader.load_documents("data")
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200, add_start_index=True)
+docs = text_splitter.split_documents(documents)
+chroma_store.add_documents(docs)
+
+
+@tool(response_format="content_and_artifact")
+def retrieve_relevant_documents(
+    query: str,
+    k: Annotated[int, "The number of relevant documents to retrieve from the vector store."] = 5
+) -> dict:
+    """Retrieve relevant documents from the vector store based on the query."""
+    results = chroma_store.similarity_search(query, k=k)
+    serialized = "\n\n".join(
+        (f"Source: {doc.metadata}\nContent: {doc.page_content}")
+        for doc in results
+    )
+    return serialized, results
