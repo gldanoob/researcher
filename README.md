@@ -5,5 +5,11 @@
 
 # Avaliable Tools
 - Arxiv
-- Brave Search and Web Requests
+- Brave Search and Selenium URL Loader
 - File Operations
+- RAG from data directory
+- Typst Command 
+
+# TODO
+- Docker integration for experiments
+- Real-time RAG updates?

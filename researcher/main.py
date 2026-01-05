@@ -72,10 +72,10 @@ async def main():
         mcp_tools = await tools.get_arxiv_tools()
 
         sub_agents_tools = {
-            "literature_reviewer_1": mcp_tools + tools.file_tools + [tools.brave_search_tool, tools.retrieve_relevant_documents] + tools.request_tools,
-            "literature_reviewer_2": mcp_tools + tools.file_tools + [tools.brave_search_tool, tools.retrieve_relevant_documents] + tools.request_tools,
-            "technical_writer": tools.file_tools + tools.request_tools + [tools.brave_search_tool, tools.retrieve_relevant_documents],
-            "peer_reviewer": tools.file_tools + tools.request_tools + [tools.brave_search_tool, tools.retrieve_relevant_documents],
+            "literature_reviewer_1": mcp_tools + tools.file_tools + [tools.brave_search_tool, tools.load_url_content, tools.retrieve_relevant_documents],
+            "literature_reviewer_2": mcp_tools + tools.file_tools + [tools.brave_search_tool, tools.load_url_content, tools.retrieve_relevant_documents],
+            "technical_writer": tools.file_tools + [tools.brave_search_tool, tools.load_url_content, tools.retrieve_relevant_documents] + [tools.run_typst_command],
+            "peer_reviewer": tools.file_tools + [tools.brave_search_tool, tools.load_url_content, tools.retrieve_relevant_documents],
         }
 
         sub_agents = {
@@ -134,7 +134,7 @@ async def main():
         async for chunk in chain.astream(
             ResearchState(
                 messages=[
-                    HumanMessage(content="LLM performance on Captcha tasks"),
+                    HumanMessage(content="Correlation of using LLM chatbots daily and brain health."),
                 ],
             ),
             subgraphs=True,

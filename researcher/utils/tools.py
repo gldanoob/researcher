@@ -1,15 +1,20 @@
 import base64
 import json
 import os
+from subprocess import PIPE, Popen
 from typing import Annotated
 
 from dotenv import load_dotenv
 from langchain.messages import ToolMessage
 from langchain.tools import BaseTool, tool
 from langchain_chroma import Chroma
-from langchain_community.agent_toolkits import FileManagementToolkit
+from langchain_community.agent_toolkits import (FileManagementToolkit,
+                                                PlayWrightBrowserToolkit)
 from langchain_community.agent_toolkits.openapi.toolkit import RequestsToolkit
+from langchain_community.document_loaders import SeleniumURLLoader
 from langchain_community.tools import BraveSearch
+from langchain_community.tools.playwright.utils import \
+    create_async_playwright_browser
 from langchain_community.utilities.requests import TextRequestsWrapper
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.interceptors import MCPToolCallRequest
@@ -38,7 +43,6 @@ def structured_output_tool(model: type[BaseModel]) -> BaseTool:
 
     wrapper.__name__ = model.__name__
     wrapper.__doc__ += "\n\n" + "\n".join(field_desc)
-    # print(wrapper.__doc__)
 
     return tool(wrapper)
 
@@ -130,3 +134,38 @@ def retrieve_relevant_documents(
         for doc in results
     )
     return serialized, results
+
+
+@tool
+def run_typst_command(
+    argv: Annotated[list[str], "Arguments to pass to the Typst command."]
+) -> str:
+    """
+    Run a Typst command with the given arguments and return the output.
+    You can use this tool to generate documents in Typst format, or check for errors in Typst files.
+    Example usage: argv = ["compile", "document.typ"]
+    """
+    process = Popen(["typst", *argv], stdout=PIPE, stderr=PIPE)
+    stdout, stderr = process.communicate()
+
+    return stdout.decode("utf-8") + "\n" + stderr.decode("utf-8")
+
+
+@tool
+def load_url_content(
+    urls: Annotated[list[str], "A list of URLs to load content from. Include the full URL with http/https."],
+) -> str:
+    """Load the content of multiple URLs using a browser."""
+    loader = SeleniumURLLoader(
+        urls=urls,
+        headless=False,
+        browser="chrome"
+    )
+    documents = loader.load()
+
+    serialized = "\n\n".join(
+        (f"Source: {doc.metadata}\nContent: {doc.page_content}")
+        for doc in documents
+    )
+
+    return serialized
